@@ -4,10 +4,29 @@ import {
   createEncounter,
   signUpload,
   finalizeRecording,
-  sendReportToLine
+  sendReport
 } from './api';
 
 const DRAFT_KEY = 'carelife_draft';
+
+/** ステップ表示用: 画面 → ステップ番号（1始まり）とラベル */
+const STEP_INFO: { screen: Screen; step: number; label: string }[] = [
+  { screen: 'SC-01', step: 1, label: '患者・担当者' },
+  { screen: 'SC-02', step: 2, label: '受診先' },
+  { screen: 'SC-04', step: 3, label: '録音準備' },
+  { screen: 'SC-05', step: 4, label: '録音' },
+  { screen: 'SC-05a', step: 4, label: '録音' },
+  { screen: 'SC-08', step: 5, label: '補足入力' },
+  { screen: 'SC-09', step: 6, label: '補足確認' },
+  { screen: 'SC-10', step: 7, label: '報告作成中' },
+  { screen: 'SC-11', step: 8, label: '報告確認・送信' },
+  { screen: 'SC-12', step: 9, label: '完了' }
+];
+const TOTAL_STEPS = 9;
+function getStepInfo(s: Screen): { step: number; label: string } | null {
+  const info = STEP_INFO.find(x => x.screen === s);
+  return info ? { step: info.step, label: info.label } : null;
+}
 
 type Screen =
   | 'SC-01' | 'SC-02' | 'SC-04' | 'SC-05' | 'SC-05a' | 'SC-06' | 'SC-07' | 'SC-08' | 'SC-09'
@@ -99,7 +118,10 @@ export default function App() {
   const [supplementPage, setSupplementPage] = useState(0);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [lineUserId, setLineUserId] = useState<string | null>(null);
+  const [chatworkRoomId, setChatworkRoomId] = useState<string | null>(null);
+  const [lastSendMessage, setLastSendMessage] = useState<string>('');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const reportTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
 
@@ -112,7 +134,9 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const uid = params.get('userId');
+    const cwRoom = params.get('chatwork_room_id');
     if (uid) setLineUserId(uid);
+    if (cwRoom) setChatworkRoomId(cwRoom);
   }, []);
 
   useEffect(() => {
@@ -127,6 +151,14 @@ export default function App() {
     const t = setInterval(() => setRecordingElapsed(Math.floor((Date.now() - recordingStartTime) / 1000)), 1000);
     return () => clearInterval(t);
   }, [recordingStartTime]);
+
+  // 報告テキストエリアを文章量に応じて高さ自動調整
+  useEffect(() => {
+    const ta = reportTextareaRef.current;
+    if (!ta || screen !== 'SC-11') return;
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.max(280, Math.min(ta.scrollHeight, 800))}px`;
+  }, [reportText, screen]);
 
   const goTo = (s: Screen, clearError = true) => {
     if (clearError) setErrorMessage('');
@@ -267,26 +299,23 @@ export default function App() {
     }
   };
 
-  const handleLineSend = async () => {
-    if (!lineUserId?.trim()) {
-      setErrorMessage('LINEから開いたリンクでアクセスしていないため、送信先が特定できません。LINEで「報告」と送り、返ってきたリンクから開き直してください。');
+  const handleSend = async () => {
+    if (!lineUserId?.trim() && !chatworkRoomId?.trim()) {
+      setErrorMessage('送信先が特定できません。LINEの「報告」から返ってきたリンク、または Chatwork のリンクから開いてください。');
       goTo('SC-ERR', false);
       return;
     }
     setLoading(true);
     try {
-      if (typeof console !== 'undefined' && console.log) {
-        console.log('[Carelife] LINEに送信開始');
-      }
-      await sendReportToLine(reportText, lineUserId);
-      if (typeof console !== 'undefined' && console.log) {
-        console.log('[Carelife] LINEに送信 API 成功');
-      }
+      const res = await sendReport(reportText, {
+        userId: lineUserId?.trim() || undefined,
+        chatwork_room_id: chatworkRoomId?.trim() || undefined
+      });
+      setLastSendMessage(res.message || '送信しました。');
       clearDraft();
       goTo('SC-12');
     } catch (e: any) {
-      const msg = e?.message || 'LINEへの送信に失敗しました';
-      setErrorMessage(msg);
+      setErrorMessage(e?.message || '送信に失敗しました');
       goTo('SC-ERR', false);
     } finally {
       setLoading(false);
@@ -340,6 +369,15 @@ export default function App() {
     setSupplementAnswers(a => ({ ...a, [id]: value }));
   };
 
+  const stepInfo = getStepInfo(screen);
+  const StepIndicator = () =>
+    stepInfo ? (
+      <div className="step-indicator" role="status" aria-label={`ステップ ${stepInfo.step} の ${stepInfo.label}`}>
+        <span className="step-indicator-text">ステップ {stepInfo.step} / {TOTAL_STEPS}</span>
+        <span className="step-indicator-label">{stepInfo.label}</span>
+      </div>
+    ) : null;
+
   // 再開確認
   if (showResumePrompt) {
     return (
@@ -356,6 +394,7 @@ export default function App() {
   if (screen === 'SC-01') {
     return (
       <div className="screen">
+        <StepIndicator />
         <h1>通院報告を作成します</h1>
         <p>患者さんの姓・名と担当者名を入力してください</p>
         <div className="input-wrap">
@@ -400,6 +439,7 @@ export default function App() {
   if (screen === 'SC-02') {
     return (
       <div className="screen">
+        <StepIndicator />
         <h1>受診先の情報</h1>
         <p>病院名・診療科・医師の名前を入力してください（報告書に反映されます）</p>
         <div className="input-wrap">
@@ -440,6 +480,7 @@ export default function App() {
   if (screen === 'SC-04') {
     return (
       <div className="screen">
+        <StepIndicator />
         <h1>録音の準備</h1>
         <p>準備ができたら録音を始めてください。診察の内容やご様子をそのまま話してください。</p>
         <button className="btn btn-primary" onClick={handleRecordStart} disabled={loading}>
@@ -453,6 +494,7 @@ export default function App() {
   if (screen === 'SC-05') {
     return (
       <div className="screen">
+        <StepIndicator />
         <h1>録音中</h1>
         <p style={{ fontSize: 32, fontWeight: 'bold', color: '#2563eb' }}>{recordingElapsed} 秒</p>
         <p>診察内容や様子を話してください</p>
@@ -467,6 +509,7 @@ export default function App() {
   if (screen === 'SC-05a') {
     return (
       <div className="screen">
+        <StepIndicator />
         <h1>録音を終了しますか？</h1>
         <p>よろしければ「はい、終了する」を押してください。</p>
         <button className="btn btn-primary" onClick={() => handleRecordEndConfirm(true)}>はい、終了する</button>
@@ -484,6 +527,7 @@ export default function App() {
 
     return (
       <div className="screen screen-compact">
+        <StepIndicator />
         <h1 className="screen-compact-title">補足（あれば入力）</h1>
         <p className="screen-compact-desc">該当するものだけ入力してください。なくても大丈夫です。</p>
         <div className="supplement-page">
@@ -516,6 +560,7 @@ export default function App() {
   if (screen === 'SC-09') {
     return (
       <div className="screen">
+        <StepIndicator />
         <h1>補足内容の確認</h1>
         <div style={{ width: '100%', maxWidth: 360, textAlign: 'left', marginBottom: 24 }}>
           {questions.map(q => (
@@ -536,6 +581,7 @@ export default function App() {
   if (screen === 'SC-10') {
     return (
       <div className="screen">
+        <StepIndicator />
         <h1>報告を作成しています</h1>
         <p>そのままでお待ちください</p>
         <div style={{ width: 48, height: 48, border: '4px solid #e2e8f0', borderTopColor: '#2563eb', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
@@ -543,36 +589,39 @@ export default function App() {
     );
   }
 
-  // SC-11 報告確認・編集（文字起こし＋要約）→ LINEに送信する
+  // SC-11 報告確認・編集（文字起こし＋要約）→ 送信する
   if (screen === 'SC-11') {
     return (
-      <div className="screen" style={{ justifyContent: 'flex-start', paddingTop: 24 }}>
+      <div className="screen screen-report-confirm" style={{ justifyContent: 'flex-start', paddingTop: 24 }}>
+        <StepIndicator />
         <h1>報告の確認・修正</h1>
-        <p>内容を確認し、修正が必要なら編集してください。問題なければ「LINEに送信する」を押してください。</p>
+        <p className="screen-report-confirm-desc">内容を確認し、修正が必要なら編集してください。問題なければ「送信する」を押してください。</p>
         {transcript && (
-          <div style={{ width: '100%', maxWidth: 560, marginBottom: 16, textAlign: 'left' }}>
-            <h2 style={{ fontSize: 16, marginBottom: 8 }}>文字起こし</h2>
-            <div className="report-box" style={{ padding: 12, minHeight: 80, maxHeight: 160, overflow: 'auto', whiteSpace: 'pre-wrap', background: '#f8fafc' }}>
+          <div className="report-section" style={{ width: '100%', maxWidth: 560, marginBottom: 16, textAlign: 'left' }}>
+            <h2 className="report-section-title">文字起こし</h2>
+            <div className="report-box report-box-scroll" style={{ padding: 12, minHeight: 80, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', background: '#f8fafc' }}>
               {transcript}
             </div>
           </div>
         )}
-        <div style={{ width: '100%', maxWidth: 560, textAlign: 'left' }}>
-          <h2 style={{ fontSize: 16, marginBottom: 8 }}>通院報告（要約）</h2>
+        <div className="report-section" style={{ width: '100%', maxWidth: 560, textAlign: 'left' }}>
+          <h2 className="report-section-title">通院報告（要約）</h2>
           <textarea
-            className="report-box"
-            style={{ minHeight: 280, resize: 'vertical', fontFamily: 'inherit', width: '100%' }}
+            ref={reportTextareaRef}
+            className="report-box report-textarea-auto"
+            style={{ minHeight: 280, resize: 'none', fontFamily: 'inherit', width: '100%', overflow: 'hidden' }}
             value={reportText}
             onChange={e => setReportText(e.target.value)}
+            aria-label="通院報告の要約文"
           />
         </div>
         <button
-          className="btn btn-primary"
-          style={{ marginTop: 16 }}
-          onClick={handleLineSend}
+          className="btn btn-primary btn-send"
+          style={{ marginTop: 20 }}
+          onClick={handleSend}
           disabled={loading}
         >
-          {loading ? '送信中…' : 'LINEに送信する'}
+          {loading ? '送信中…' : '送信する'}
         </button>
       </div>
     );
@@ -582,9 +631,10 @@ export default function App() {
   if (screen === 'SC-12') {
     return (
       <div className="screen">
-        <h1>LINEに送信しました</h1>
-        <p>通院報告がLINEに投稿されています。</p>
-        <p className="screen-close-hint">「終了」を押すと画面が閉じてLINEに戻ります。閉じられない場合は、右上の×ボタンを押してください。</p>
+        <StepIndicator />
+        <h1>送信しました</h1>
+        <p className="send-complete-message">{lastSendMessage}</p>
+        <p className="screen-close-hint">「終了」を押すと画面が閉じます。閉じられない場合は、ブラウザの×ボタンで閉じてください。</p>
         <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={handleEnd}>
           終了
         </button>

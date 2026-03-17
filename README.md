@@ -1,7 +1,7 @@
 # 介護施設向け通院報告支援システム（Carelife MVP）
 
 要件定義書 **v02**（`20260307_要件定義書v02.md`）に基づく MVP です。  
-**LINE のみで完結**する通院報告の作成〜確認・送信までを一通り利用できます。
+**LINE** および **Chatwork** から通院報告の作成〜確認・送信までを利用できます。LINE から開いた場合は LINE と Chatwork の両方へ、Chatwork のリンクから開いた場合は Chatwork のみへ送信されます。
 
 ---
 
@@ -13,8 +13,10 @@
   - 音声のアップロード（録音 → バックエンド送信 → GCS 保存）
   - 文字起こし（Speech-to-Text）
   - AI 要約（Gemini による通院報告文生成）
-  - LINE への報告送信（Push メッセージ）
+  - **LINE への報告送信**（Push メッセージ）
+  - **Chatwork への報告送信**（LINE から開いた場合は LINE＋Chatwork 両方、Chatwork のリンクから開いた場合は Chatwork のみ）
   - LINE Bot による「報告」キーワード／リッチメニューからの報告作成リンク返却
+  - 報告画面のステップ表示（何番目／全何ステップ）、報告テキスト欄の自動リサイズ、「送信する」ボタンで送信先を自動判別
 
 ### 本番環境の URL と接続関係
 
@@ -28,9 +30,10 @@ Cloud Run にデプロイ済みの各サービスの URL と、それらのつ�
 
 **接続の流れ**
 
-1. **LINE → フロント**: ユーザーが LINE で「報告」と送る（またはリッチメニューをタップ）と、Bot が **フロントエンドの URL**（`https://carelife-frontend-887034737640.asia-northeast1.run.app?userId=Uxxxx...`）を返す。ユーザーがそのリンクを開くと報告作成画面が表示される。
-2. **フロント → バックエンド**: 報告画面では、録音送信・報告生成・「LINEに送信する」のリクエストをすべて **バックエンドの URL**（`https://carelife-backend-887034737640.asia-northeast1.run.app`）へ送る。フロントはビルド時にこの URL を `VITE_API_BASE_URL` として埋め込んでいる。
-3. **LINE Developers**: LINE の Webhook URL には **LINE Bot の URL + `/webhook`**（`https://carelife-linebot-887034737640.asia-northeast1.run.app/webhook`）を設定する。
+1. **LINE → フロント**: ユーザーが LINE で「報告」と送る（またはリッチメニューをタップ）すると、Bot が **フロントエンドの URL**（`?userId=Uxxxx...` 付き）を返す。そのリンクから開いて報告を作成・送信すると、**LINE と Chatwork の両方** に送信される。
+2. **Chatwork から開く場合**: フロントの URL に **`?chatwork_room_id=ルームID`** を付けて共有する（例: `...run.app?chatwork_room_id=425737026`）。このリンクから開いて送信すると、**その Chatwork ルームにのみ** 送信され、LINE には送らない。
+3. **フロント → バックエンド**: 報告画面では、録音送信・報告生成・「送信する」のリクエストをすべて **バックエンドの URL** へ送る。送信先（LINE / Chatwork / 両方）は URL の `userId` と `chatwork_room_id` から自動判別される。
+4. **LINE Developers**: LINE の Webhook URL には **LINE Bot の URL + `/webhook`**（`https://carelife-linebot-887034737640.asia-northeast1.run.app/webhook`）を設定する。
 
 ---
 
@@ -38,9 +41,9 @@ Cloud Run にデプロイ済みの各サービスの URL と、それらのつ�
 
 | コンポーネント | 役割 |
 |----------------|------|
-| **backend** | 通院報告用 API（施設・患者・録音アップロード、GCS・STT・Gemini 要約、報告生成、LINE 送信） |
-| **frontend** | 画面 SC-01〜SC-12（録音〜補足入力〜報告確認〜LINE 送信完了）の Web アプリ |
-| **line-bot** | LINE Webhook サーバー（「報告」等に反応し、報告作成用フロント URL を返す。URL に userId 付与で「LINEに送信する」の宛先を特定） |
+| **backend** | 通院報告用 API（施設・患者・録音アップロード、GCS・STT・Gemini 要約、報告生成、LINE / Chatwork 送信。`userId`・`chatwork_room_id` で送信先を切り替え） |
+| **frontend** | 画面 SC-01〜SC-12（録音〜補足入力〜報告確認〜送信完了）。URL の `userId` / `chatwork_room_id` で送信先を判別し「送信する」で送信 |
+| **line-bot** | LINE Webhook サーバー（「報告」等に反応し、報告作成用フロント URL を返す。受信テキストを Chatwork の指定ルームに転送する機能あり） |
 
 ---
 
@@ -121,6 +124,8 @@ GCP のメディキャンバスプロジェクトで、環境変数は Cloud Run
 | `GEMINI_API_KEY` | 通院報告生成用 | GCP で設定済み | 実機利用時のみ .env に記載 |
 | `LINE_CHANNEL_ACCESS_TOKEN` | 報告の LINE 送信に使用 | GCP で設定済み | LINE 送信を試す場合のみ .env に記載 |
 | `LINE_CHANNEL_SECRET` | line-bot で使用（backend では未使用） | line-bot の GCP で設定済み | line-bot をローカルで動かすときのみ |
+| `CHATWORK_API_TOKEN` | Chatwork API トークン（報告・転送の投稿に使用） | backend / line-bot の GCP で設定済み | Chatwork 連携を試す場合のみ .env に記載 |
+| `CHATWORK_ROOM_ID` | 投稿先 Chatwork ルーム ID（未指定時は送信 API で上書き可能） | GCP で設定済み | 同上 |
 
 ローカル用のひな形は `backend/.env.example` をコピーして `backend/.env` を作成し、値を埋めてください。`.env` は Git にコミットしないでください。
 
@@ -136,6 +141,7 @@ GCP のメディキャンバスプロジェクトで、環境変数は Cloud Run
 |------|------|
 | `FRONTEND_URL` | 報告作成画面の URL。本番では本番フロントの URL を GCP に設定済み。 |
 | `LINE_CHANNEL_SECRET` / `LINE_CHANNEL_ACCESS_TOKEN` | Webhook 検証・返信用。本番では GCP に設定済み。 |
+| `CHATWORK_API_TOKEN` / `CHATWORK_ROOM_ID` | LINE 受信テキストの Chatwork 転送先。未設定の場合は転送しない。 |
 
 ---
 
@@ -148,15 +154,16 @@ GCP のメディキャンバスプロジェクトで、環境変数は Cloud Run
 | [ハンドオーバー](docs/ハンドオーバー_20260307.md) | 引き継ぎ用の状態まとめ |
 | [Cloud Run デプロイ手順](docs/Cloud_Runデプロイ手順.md) | 本番デプロイの手順 |
 | [MVP ローカル実行手順](docs/MVPローカル実行手順.md) | ローカルで音声〜要約まで動かす手順 |
-| [LINE Webhook 設定で動かないとき](docs/LINE_Webhook設定で動かないとき.md) | LINE Bot・「LINEに送信する」のトラブルシュート |
+| [LINE Webhook 設定で動かないとき](docs/LINE_Webhook設定で動かないとき.md) | LINE Bot・「送信する」のトラブルシュート |
 | [LINE グループ・リッチメニュー利用手順](docs/LINEグループ・リッチメニュー利用手順.md) | グループでの利用・リッチメニュー設定 |
+| [Chatwork 連携テスト手順](docs/Chatwork連携テスト手順.md) | Chatwork API トークン取得、手動投稿・LINE→Chatwork 転送・報告送信のテスト、転送されないときの確認 |
 
 ---
 
 ## 今後の拡張（未実装）
 
-- **Chatwork 連携**: 報告文の Chatwork 送信
 - **認証・施設別設定**: 利用者認証、施設ごとの設定の切り替え
+- **Chatwork の拡張**: 患者ルームごとの振り分け、テンプレート／AI 整形のメッセージ連携（詳細は [ハンドオーバー](docs/ハンドオーバー_20260307.md) の「Chatwork 連携」を参照）
 - その他、要件定義書・開発計画に記載の将来フェーズ
 
-※ 音声アップロード、文字起こし、AI 要約、LINE への報告送信は **すでに実装済み** です。
+※ 音声アップロード、文字起こし、AI 要約、**LINE および Chatwork への報告送信** は **すでに実装済み** です。

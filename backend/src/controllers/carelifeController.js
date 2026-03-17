@@ -399,65 +399,112 @@ exports.getReport = (req, res) => {
 // --- Send report to LINE (Push Message) ---
 const LINE_MESSAGE_MAX_LENGTH = 5000;
 
+/**
+ * 通院報告の要約文を Chatwork の指定ルームに投稿する
+ * @param {string} reportText - 報告文
+ * @param {string} [roomId] - ルームID。省略時は環境変数 CHATWORK_ROOM_ID を使用
+ */
+function postReportToChatwork(reportText, roomId) {
+  const token = process.env.CHATWORK_API_TOKEN ? String(process.env.CHATWORK_API_TOKEN).trim() : '';
+  const rid = (roomId && String(roomId).trim()) || (process.env.CHATWORK_ROOM_ID ? String(process.env.CHATWORK_ROOM_ID).trim() : '');
+  if (!token || !rid) return;
+  const time = new Date().toISOString();
+  const body = `[info][title]通院報告（LINE に送信した内容）[/title]本文:\n${reportText || '(空)'}\n\n時刻: ${time}[/info]`;
+  const url = `https://api.chatwork.com/v2/rooms/${rid}/messages`;
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      'x-chatworktoken': token,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ body }).toString(),
+  })
+    .then((r) => {
+      if (!r.ok) return r.text().then((t) => { throw new Error(`${r.status}: ${t}`); });
+      return r.json();
+    })
+    .then((data) => console.log('[Chatwork] 通院報告を転送しました message_id:', data.message_id))
+    .catch((err) => console.error('[Chatwork] 通院報告の転送エラー:', err.message));
+}
+
+/**
+ * 報告送信 API: userId があれば LINE に、chatwork_room_id があれば Chatwork に送信。
+ * LINE から開いた場合: userId + (環境変数で Chatwork も有効なら) Chatwork にも送る。
+ * Chatwork から開いた場合: chatwork_room_id のみ → Chatwork にだけ送る。
+ */
 exports.sendReportToLine = async (req, res) => {
   try {
-    const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-    if (!token || !token.trim()) {
-      return res.status(503).json({
-        error: 'LINE送信は現在利用できません。管理者に連絡してください。'
-      });
-    }
-    const { reportText, userId } = req.body || {};
-    if (!userId || typeof userId !== 'string' || !userId.trim()) {
-      return res.status(400).json({
-        error: '送信先が特定できません。LINEの「報告」などからリンクを開いてください。'
-      });
-    }
+    const { reportText, userId, chatwork_room_id } = req.body || {};
     const text = typeof reportText === 'string' ? reportText.trim() : '';
     if (!text) {
       return res.status(400).json({ error: '報告文が空です。' });
     }
-    const body = text.length <= LINE_MESSAGE_MAX_LENGTH
-      ? text
-      : text.slice(0, LINE_MESSAGE_MAX_LENGTH - 20) + '\n\n...(長いため省略)';
-    const response = await fetch('https://api.line.me/v2/bot/message/push', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        to: userId.trim(),
-        messages: [{ type: 'text', text: body }]
-      })
-    });
-    const errBody = await response.text();
-    if (!response.ok) {
-      let lineMessage = '';
-      try {
-        const errJson = JSON.parse(errBody);
-        lineMessage = errJson.message || errJson.details?.[0]?.message || '';
-      } catch (_) {}
-      console.error('[LINE] Push message failed:', response.status, errBody);
-      if (response.status === 401) {
-        return res.status(503).json({ error: 'LINE送信の設定に問題があります。トークンを確認してください。' });
-      }
-      if (response.status === 403) {
-        const hint = lineMessage || 'Botがブロックされている、または友だちに追加されていない可能性があります。';
-        return res.status(400).json({
-          error: 'LINEへの送信に失敗しました。' + hint
-        });
-      }
-      if (response.status === 400) {
-        const hint = lineMessage || '送信先の指定に問題がある可能性があります。LINEの「報告」から返ってきたリンクをそのまま開き直してください。';
-        return res.status(400).json({ error: 'LINEへの送信に失敗しました。' + hint });
-      }
-      return res.status(502).json({
-        error: 'LINEへの送信に失敗しました。しばらくしてからお試しください。' + (lineMessage ? ' (' + lineMessage + ')' : '')
+    const sendToLine = userId && typeof userId === 'string' && userId.trim();
+    const sendToChatwork = chatwork_room_id && String(chatwork_room_id).trim();
+    if (!sendToLine && !sendToChatwork) {
+      return res.status(400).json({
+        error: '送信先が特定できません。LINEの「報告」または Chatwork のリンクから開いてください。'
       });
     }
-    console.log('[LINE] Push message sent successfully (to userId, length=' + body.length + ' chars)');
-    return res.json({ ok: true, message: 'LINEに送信しました。' });
+
+    if (sendToLine) {
+      const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+      if (!token || !token.trim()) {
+        return res.status(503).json({
+          error: 'LINE送信は現在利用できません。管理者に連絡してください。'
+        });
+      }
+      const body = text.length <= LINE_MESSAGE_MAX_LENGTH
+        ? text
+        : text.slice(0, LINE_MESSAGE_MAX_LENGTH - 20) + '\n\n...(長いため省略)';
+      const response = await fetch('https://api.line.me/v2/bot/message/push', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          to: userId.trim(),
+          messages: [{ type: 'text', text: body }]
+        })
+      });
+      const errBody = await response.text();
+      if (!response.ok) {
+        let lineMessage = '';
+        try {
+          const errJson = JSON.parse(errBody);
+          lineMessage = errJson.message || errJson.details?.[0]?.message || '';
+        } catch (_) {}
+        console.error('[LINE] Push message failed:', response.status, errBody);
+        if (response.status === 401) {
+          return res.status(503).json({ error: 'LINE送信の設定に問題があります。トークンを確認してください。' });
+        }
+        if (response.status === 403) {
+          const hint = lineMessage || 'Botがブロックされている、または友だちに追加されていない可能性があります。';
+          return res.status(400).json({ error: 'LINEへの送信に失敗しました。' + hint });
+        }
+        if (response.status === 400) {
+          const hint = lineMessage || '送信先の指定に問題がある可能性があります。LINEの「報告」から返ってきたリンクをそのまま開き直してください。';
+          return res.status(400).json({ error: 'LINEへの送信に失敗しました。' + hint });
+        }
+        return res.status(502).json({
+          error: 'LINEへの送信に失敗しました。しばらくしてからお試しください。' + (lineMessage ? ' (' + lineMessage + ')' : '')
+        });
+      }
+      console.log('[LINE] Push message sent successfully (to userId, length=' + body.length + ' chars)');
+    }
+
+    // Chatwork: LINE から開いた場合は既定ルームへ、Chatwork から開いた場合は指定 room_id へ
+    if (sendToChatwork) {
+      postReportToChatwork(text, String(chatwork_room_id).trim());
+    } else if (sendToLine && process.env.CHATWORK_ROOM_ID) {
+      postReportToChatwork(text);
+    }
+
+    const message = sendToLine && sendToChatwork ? 'LINE と Chatwork に送信しました。'
+      : sendToLine ? 'LINEに送信しました。'
+      : 'Chatworkに送信しました。';
+    return res.json({ ok: true, message });
   } catch (e) {
     console.error('sendReportToLine error:', e);
     res.status(500).json({ error: e.message || '送信に失敗しました。' });

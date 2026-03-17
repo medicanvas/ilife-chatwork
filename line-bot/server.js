@@ -3,6 +3,8 @@
  * 環境変数 LINE_CHANNEL_SECRET / LINE_CHANNEL_ACCESS_TOKEN が設定されている場合のみ
  * メッセージに応答し、報告作成用のリンクを返します。
  * 未設定の場合は Webhook に 200 を返すだけ（LINE の検証用）。
+ * CHATWORK_API_TOKEN / CHATWORK_ROOM_ID が設定されている場合、受信テキストを Chatwork に転送します。
+ * （環境変数は Cloud Run の「変数とシークレット」等で設定してください。.env は読み込みません）
  */
 const express = require('express');
 
@@ -16,12 +18,55 @@ app.use(express.urlencoded({ extended: true }));
 // 報告作成用フロントエンドのURL（環境変数で上書き可能）
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
+// Chatwork 転送（環境変数が設定されているときのみ。前後の空白は除去）
+const CHATWORK_API_TOKEN = process.env.CHATWORK_API_TOKEN ? String(process.env.CHATWORK_API_TOKEN).trim() : '';
+const CHATWORK_ROOM_ID = process.env.CHATWORK_ROOM_ID ? String(process.env.CHATWORK_ROOM_ID).trim() : '';
+
+/**
+ * LINE で受信したテキストを Chatwork の指定ルームに投稿する
+ * @param {string} userId - LINE のユーザーID
+ * @param {string} text - メッセージ本文
+ * @param {string} [sourceType] - group / user など（任意）
+ */
+function postLineMessageToChatwork(userId, text, sourceType) {
+  if (!CHATWORK_API_TOKEN || !CHATWORK_ROOM_ID) {
+    console.log('[Chatwork] 転送スキップ: CHATWORK_API_TOKEN または CHATWORK_ROOM_ID が未設定です。Cloud Run の「変数とシークレット」を確認してください。');
+    return;
+  }
+  const time = new Date().toISOString();
+  const sourceLabel = sourceType === 'group' ? 'グループ' : sourceType === 'user' ? '1対1' : (sourceType || 'LINE');
+  const body = `[info][title]LINE から（${sourceLabel}）[/title]送信者ID: ${userId || '(不明)'}\n本文:\n${text || '(空)'}\n時刻: ${time}[/info]`;
+  const url = `https://api.chatwork.com/v2/rooms/${CHATWORK_ROOM_ID}/messages`;
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      'x-chatworktoken': CHATWORK_API_TOKEN,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ body }).toString(),
+  })
+    .then((r) => {
+      if (!r.ok) {
+        return r.text().then((t) => {
+          console.error('[Chatwork] API エラー', r.status, t);
+          throw new Error(`${r.status}: ${t}`);
+        });
+      }
+      return r.json();
+    })
+    .then((data) => console.log('[Chatwork] 転送しました message_id:', data.message_id))
+    .catch((err) => console.error('[Chatwork] 転送エラー:', err.message));
+}
+
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Carelife LINE Bot (MVP)' });
 });
 
 app.post('/webhook', (req, res) => {
   res.status(200).send('OK');
+
+  const events = req.body?.events || [];
+  console.log('[LINE] POST /webhook received, events:', events.length);
 
   const secret = process.env.LINE_CHANNEL_SECRET;
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -31,7 +76,6 @@ app.post('/webhook', (req, res) => {
     return;
   }
 
-  const events = req.body?.events || [];
   for (const ev of events) {
     const replyToken = ev.replyToken;
     let triggerReport = false;
@@ -42,6 +86,10 @@ app.post('/webhook', (req, res) => {
     if (ev.type === 'message' && ev.message?.type === 'text') {
       const text = (ev.message.text || '').trim();
       if (/報告|通院|はじめる|スタート/.test(text)) triggerReport = true;
+      // Chatwork 転送（CHATWORK_API_TOKEN / CHATWORK_ROOM_ID が設定されている場合）
+      const sourceType = ev.source && ev.source.type;
+      console.log('[LINE] テキスト受信 → Chatwork 転送を試行 type=', ev.type, 'sourceType=', sourceType);
+      postLineMessageToChatwork(userId, text, sourceType);
     }
 
     // リッチメニューのポストバック: data が "report" または "action=report" のときも同じく報告リンクを返す
@@ -80,5 +128,10 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`LINE Bot server running on port ${PORT}`);
   if (!process.env.LINE_CHANNEL_ACCESS_TOKEN) {
     console.log('LINE_CHANNEL_ACCESS_TOKEN not set. Bot will not reply to messages.');
+  }
+  if (!CHATWORK_API_TOKEN || !CHATWORK_ROOM_ID) {
+    console.log('[Chatwork] CHATWORK_API_TOKEN または CHATWORK_ROOM_ID が未設定のため、LINE→Chatwork 転送は行われません。');
+  } else {
+    console.log('[Chatwork] 転送有効: room_id=', CHATWORK_ROOM_ID);
   }
 });

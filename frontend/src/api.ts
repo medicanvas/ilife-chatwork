@@ -114,23 +114,24 @@ export async function finalizeRecording(
   return data as { ok: boolean; reportText?: string; transcript?: string; encounterId?: string };
 }
 
-/** 報告文を LINE に Push 送信する（LINE からリンクを開いたときの userId が必要） */
-export async function sendReportToLine(reportText: string, userId: string) {
+/** 報告文を送信する。userId があれば LINE へ、chatwork_room_id があれば Chatwork へ。両方あれば両方へ。 */
+export async function sendReport(
+  reportText: string,
+  options: { userId?: string | null; chatwork_room_id?: string | null }
+) {
+  const { userId, chatwork_room_id } = options;
   const url = `${API_BASE}/api/carelife/send-to-line`;
-  if (typeof console !== 'undefined' && console.log) {
-    console.log('[Carelife] send-to-line を呼び出し中:', url, 'reportText length:', reportText?.length, 'userId length:', userId?.length);
-  }
+  const body: { reportText: string; userId?: string; chatwork_room_id?: string } = { reportText };
+  if (userId?.trim()) body.userId = userId.trim();
+  if (chatwork_room_id?.trim()) body.chatwork_room_id = chatwork_room_id.trim();
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reportText, userId })
+    body: JSON.stringify(body)
   });
   const data = await res.json().catch(() => ({}));
-  if (typeof console !== 'undefined' && console.log) {
-    console.log('[Carelife] send-to-line 応答:', res.status, data);
-  }
   if (!res.ok) {
-    throw new Error((data as { error?: string }).error || 'LINEへの送信に失敗しました');
+    throw new Error((data as { error?: string }).error || '送信に失敗しました');
   }
   return data as { ok: boolean; message?: string };
 }
