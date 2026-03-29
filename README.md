@@ -10,7 +10,66 @@
 
 ---
 
-## 現時点の状態（本番）
+## チャットワーク記録 AI要約機能（新規）
+
+チャットワークに蓄積された支援記録をAI（Gemini）で自動要約する機能です。
+
+### できること
+
+| 機能 | 説明 |
+|------|------|
+| **週次サマリー** | 指定期間の記録を時系列で要約。「安定/注意/要介入」の3段階評価。出典付き |
+| **リスク検知** | 発熱・発作・嘔吐・自傷等の危険兆候を自動検出。赤/黄/緑の色分け表示 |
+| **区分認定用** | 認定調査80項目・5領域に沿ったエビデンス整理。出典付き |
+| **Chatwork送信** | 生成した要約をChatworkルームに直接送信 |
+| **コピー** | ワンタップでクリップボードにコピー（LINE・カレンダーに貼り付け用） |
+
+### ローカルで確認する手順
+
+```bash
+git clone https://github.com/medicanvas/ilife-chatwork.git
+cd ilife-chatwork
+
+# バックエンド起動
+cd backend
+npm install
+cp .env.example .env   # GEMINI_API_KEYを設定（AI要約に必要）
+npm run dev             # → http://localhost:8081
+
+# 別ターミナルでフロントエンド起動
+cd frontend
+npm install
+npm run dev             # → http://localhost:5173
+```
+
+ブラウザで `http://localhost:5173` を開くと、トップメニューから「チャットワーク記録からAI要約」を選択できます。
+
+### テストデータ
+
+`backend/src/data/testMessages.js` にサンプルの支援記録が含まれています。
+
+| 利用者 | ルームID | 内容 |
+|--------|----------|------|
+| 田中さん（テスト） | 429340132 | 実Chatworkルーム連携用（Aさんデータ共用） |
+| Aさん（田中） | 100001 | 加藤スタイル: 短文・事実重視。発熱・自傷の急変イベントあり |
+| Bさん（佐藤） | 100002 | 高橋スタイル: 実務重視。てんかん発作・嘔吐・便秘の重症イベントあり |
+
+GEMINI_API_KEY未設定でもフロントエンドの画面表示・操作は確認できます（要約生成時にエラーになります）。
+
+### 関連ファイル
+
+| ファイル | 内容 |
+|----------|------|
+| `backend/src/controllers/chatworkSummaryController.js` | AI要約・リスク検知・Chatwork送信のメインロジック |
+| `frontend/src/ChatworkSummary.tsx` | チャットワーク要約画面 |
+| `scripts/gas-chatwork-collector.js` | GASスクリプト（Chatwork→スプシ蓄積） |
+| `docs/system-guide-ilife.md` | アイライフ向けシステム説明資料 |
+| `docs/architecture-chatwork-summary.md` | アーキテクチャ設計書 |
+| `docs/ai-prompt-design.md` | AIプロンプト設計書 |
+
+---
+
+## 音声通院報告機能（既存）
 
 - **Cloud Run デプロイ**: バックエンド・フロントエンド・LINE Bot の 3 サービスを Cloud Run にデプロイ済みです。
 - **認証・API**: 環境変数（LINE Channel Access Token / LINE Channel Secret、Gemini API キー、Google Application Credentials など）は **GCP（Google Cloud Platform）のメディキャンバスアカウント側** で、Cloud Run の各サービスの「変数とシークレット」に登録済みです。本番ではここから取得して利用しています。
@@ -65,8 +124,8 @@ Cloud Run にデプロイ済みの各サービスの URL と、それらのつ�
 ### 1. リポジトリの取得
 
 ```bash
-git clone https://github.com/medicanvas/carelife-demo.git
-cd carelife-demo
+git clone https://github.com/medicanvas/ilife-chatwork.git
+cd ilife-chatwork
 ```
 
 ### 2. 動きの確認（フロントエンドのみ・本番 API 利用）
