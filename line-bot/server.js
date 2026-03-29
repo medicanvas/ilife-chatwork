@@ -22,6 +22,20 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const CHATWORK_API_TOKEN = process.env.CHATWORK_API_TOKEN ? String(process.env.CHATWORK_API_TOKEN).trim() : '';
 const CHATWORK_ROOM_ID = process.env.CHATWORK_ROOM_ID ? String(process.env.CHATWORK_ROOM_ID).trim() : '';
 
+/** 日本時間（JST）で YYYY-MM-DD HH:mm:ss 形式の文字列を返す（LINE/Chatwork 送信用） */
+function formatTimeJst(date = new Date()) {
+  return date.toLocaleString('en-CA', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).replace(', ', ' ');
+}
+
 /**
  * LINE で受信したテキストを Chatwork の指定ルームに投稿する
  * @param {string} userId - LINE のユーザーID
@@ -33,7 +47,7 @@ function postLineMessageToChatwork(userId, text, sourceType) {
     console.log('[Chatwork] 転送スキップ: CHATWORK_API_TOKEN または CHATWORK_ROOM_ID が未設定です。Cloud Run の「変数とシークレット」を確認してください。');
     return;
   }
-  const time = new Date().toISOString();
+  const time = formatTimeJst();
   const sourceLabel = sourceType === 'group' ? 'グループ' : sourceType === 'user' ? '1対1' : (sourceType || 'LINE');
   const body = `[info][title]LINE から（${sourceLabel}）[/title]送信者ID: ${userId || '(不明)'}\n本文:\n${text || '(空)'}\n時刻: ${time}[/info]`;
   const url = `https://api.chatwork.com/v2/rooms/${CHATWORK_ROOM_ID}/messages`;

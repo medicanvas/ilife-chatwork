@@ -8,6 +8,20 @@ const store = MOCK ? require('../config/mockStore') : null;
 const { bucket } = require('../config/gcs');
 const { execFFmpeg } = require('../utils/mediaUtils');
 
+/** 日本時間（JST）で YYYY-MM-DD HH:mm:ss 形式の文字列を返す（LINE/Chatwork 送信用） */
+function formatTimeJst(date = new Date()) {
+  return date.toLocaleString('en-CA', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).replace(', ', ' ');
+}
+
 // --- Facilities (MVP: mock only) ---
 exports.listFacilities = (req, res) => {
   try {
@@ -408,7 +422,7 @@ function postReportToChatwork(reportText, roomId) {
   const token = process.env.CHATWORK_API_TOKEN ? String(process.env.CHATWORK_API_TOKEN).trim() : '';
   const rid = (roomId && String(roomId).trim()) || (process.env.CHATWORK_ROOM_ID ? String(process.env.CHATWORK_ROOM_ID).trim() : '');
   if (!token || !rid) return;
-  const time = new Date().toISOString();
+  const time = formatTimeJst();
   const body = `[info][title]通院報告（LINE に送信した内容）[/title]本文:\n${reportText || '(空)'}\n\n時刻: ${time}[/info]`;
   const url = `https://api.chatwork.com/v2/rooms/${rid}/messages`;
   fetch(url, {

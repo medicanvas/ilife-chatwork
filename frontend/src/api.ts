@@ -114,6 +114,93 @@ export async function finalizeRecording(
   return data as { ok: boolean; reportText?: string; transcript?: string; encounterId?: string };
 }
 
+// ============================================================
+// チャットワーク記録 → AI要約 API
+// ============================================================
+
+export interface ChatworkRoom {
+  room_id: string;
+  room_name: string;
+  patient_name: string;
+  patient_type: string;
+}
+
+export interface ChatworkSummaryResult {
+  ok: boolean;
+  summary: string;
+  message_count: number;
+  noise_removed: number;
+  period: { start: string; end: string };
+}
+
+export interface RiskAlert {
+  level: string;
+  category?: string;
+  summary: string;
+  detail?: string;
+  recommended_action?: string;
+}
+
+/** 蓄積済みルーム一覧を取得 */
+export async function getChatworkRooms(): Promise<ChatworkRoom[]> {
+  const res = await fetch(`${API_BASE}/api/chatwork/rooms`);
+  if (!res.ok) throw new Error('ルーム一覧の取得に失敗しました');
+  const data = await res.json();
+  return data.rooms || [];
+}
+
+/** room_id からルーム情報を取得（Chatwork API経由） */
+export async function getChatworkRoomInfo(roomId: string): Promise<ChatworkRoom> {
+  const res = await fetch(`${API_BASE}/api/chatwork/room-info?room_id=${encodeURIComponent(roomId)}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || 'ルーム情報の取得に失敗しました');
+  return data as ChatworkRoom;
+}
+
+/** 要約結果をChatworkルームに送信 */
+export async function sendSummaryToChatwork(roomId: string, summaryText: string, summaryType: string): Promise<{ ok: boolean; message?: string }> {
+  const res = await fetch(`${API_BASE}/api/chatwork/send-summary`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ room_id: roomId, summary_text: summaryText, summary_type: summaryType })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || 'Chatworkへの送信に失敗しました');
+  return data as { ok: boolean; message?: string };
+}
+
+/** チャットワーク記録からAI要約を生成 */
+export async function generateChatworkSummary(params: {
+  room_id: string;
+  period?: string;
+  start_date?: string;
+  end_date?: string;
+  summary_type?: string;
+  patient_name?: string;
+  additional_context?: string;
+}): Promise<ChatworkSummaryResult> {
+  const res = await fetch(`${API_BASE}/api/chatwork/summary`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || '要約の生成に失敗しました');
+  return data as ChatworkSummaryResult;
+}
+
+/** リスク・異常検知 */
+export async function detectChatworkRisks(roomId: string): Promise<RiskAlert[]> {
+  const res = await fetch(`${API_BASE}/api/chatwork/detect-risks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ room_id: roomId })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || 'リスク検知に失敗しました');
+  return (data as { alerts: RiskAlert[] }).alerts || [];
+}
+
 /** 報告文を送信する。userId があれば LINE へ、chatwork_room_id があれば Chatwork へ。両方あれば両方へ。 */
 export async function sendReport(
   reportText: string,

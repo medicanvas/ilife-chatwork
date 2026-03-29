@@ -20,12 +20,24 @@ app.use(express.static(path.join(__dirname, 'public')));
 const routes = require('./src/routes/index');
 app.use('/api', routes);
 
-app.get('/', (req, res) => {
+app.get('/api', (req, res) => {
   res.json({
     status: 'ok',
     message: 'Carelife 通院報告支援 API',
     version: '1.0.0-mvp'
   });
+});
+
+// SPA フォールバック: /api 以外のパスで public/index.html を返す（本番デプロイ用）
+const indexHtml = path.join(__dirname, 'public', 'index.html');
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) return next();
+  const fs = require('fs');
+  if (fs.existsSync(indexHtml)) {
+    return res.sendFile(indexHtml);
+  }
+  // public/index.html が無い場合（開発中）はAPIステータスを返す
+  res.json({ status: 'ok', message: 'Carelife API（フロントは npx vite dev で起動してください）' });
 });
 
 app.use((err, req, res, next) => {
