@@ -90,7 +90,7 @@ npm run dev
   - 録音ファイルを multipart で受信
   - ffmpeg で 16kHz mono WAV に変換 → GCS にアップロード
   - Speech-to-Text V2（chirp_3, asia-northeast1）で文字起こし
-  - Gemini（gemini-3.1-flash-lite-preview）で通院報告風の要約文を生成
+  - Gemini（gemini-3.1-flash-lite）で通院報告風の要約文を生成
   - レスポンスで `transcript` と `reportText` を返却
   - **LINE 送信**: `POST /api/carelife/send-to-line` で報告文を LINE Push 送信（`LINE_CHANNEL_ACCESS_TOKEN` 必須）
 - **フロントエンド**
